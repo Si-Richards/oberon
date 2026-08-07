@@ -1,0 +1,18 @@
+services:
+  oberon:
+    build: .
+    image: oberon-market-maker:0.1.0
+    container_name: binance-market-maker
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - oberon-data:/data
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+volumes:
+  oberon-data:
