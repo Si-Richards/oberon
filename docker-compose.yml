@@ -16,3 +16,4 @@ services:
 
 volumes:
   oberon-data:
+    name: ${OBERON_VOLUME_NAME:-oberon-market-maker-v090_oberon-data}

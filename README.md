@@ -27,7 +27,7 @@ docker compose up -d --build
 docker logs -f binance-market-maker
 ```
 
-The default container name remains `binance-market-maker` so the reporting commands match earlier Oberon deployments.
+The default container name remains `binance-market-maker` so the reporting commands match earlier Oberon deployments. The Compose file also reuses `oberon-market-maker-v090_oberon-data` by default; set `OBERON_VOLUME_NAME` in `.env` if your existing data volume has a different name.
 
 ## Signal discovery
 
