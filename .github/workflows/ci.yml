@@ -11,6 +11,4 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements-dev.txt
-      - run: ruff check app tests
-      - run: PYTHONPATH=. pytest -q
-      - run: docker build -t oberon-market-maker:ci .
+      - run: make check

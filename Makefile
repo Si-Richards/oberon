@@ -1,12 +1,9 @@
-.PHONY: test lint check run
+.PHONY: test lint check
 
 test:
-	PYTHONPATH=. pytest -q
+	pytest -q
 
 lint:
 	ruff check app tests
 
-check: lint test
-
-run:
-	python -m app.main
+check: test lint

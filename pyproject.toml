@@ -1,25 +1,14 @@
 [project]
 name = "oberon-market-maker"
-version = "0.1.0"
-description = "Binance Spot Testnet market-making research bot"
+version = "0.9.1"
+description = "Binance USD-M Futures market microstructure research and paper market maker"
 requires-python = ">=3.12"
-dependencies = [
-  "aiohttp>=3.10,<4",
-  "pydantic>=2.8,<3",
-  "pydantic-settings>=2.4,<3",
-]
-
-[project.optional-dependencies]
-dev = [
-  "pytest>=8,<9",
-  "pytest-asyncio>=0.24,<1",
-  "ruff>=0.6,<1",
-]
+dependencies = ["aiohttp>=3.10,<4"]
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py312"

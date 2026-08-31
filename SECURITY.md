@@ -1,7 +1,5 @@
 # Security
 
-Never commit Binance API credentials. Keep secrets in `.env`, which is ignored by Git.
+Oberon v0.9.1 uses public Binance market-data endpoints and does not require exchange credentials. Do not add API keys or secrets to the repository. Keep `.env` local and untracked.
 
-Oberon currently permits only `paper` and `testnet` trading modes and validates that Testnet mode points at `testnet.binance.vision` endpoints.
-
-If credentials are accidentally exposed, revoke them immediately in Binance Testnet and generate replacements.
+Report security issues privately to the project maintainer rather than opening a public issue containing credentials, private infrastructure details or sensitive logs.

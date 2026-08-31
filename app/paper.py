@@ -1,38 +1,35 @@
 from __future__ import annotations
 
-from decimal import Decimal
+from dataclasses import dataclass
 
-from .models import Balance, OpenOrder
-from .util import now_ms
+from .models import PaperFill, PaperQuote
 
 
-class PaperBroker:
-    def __init__(self, base: Decimal, quote: Decimal):
-        self.base = Balance(base)
-        self.quote = Balance(quote)
-        self.orders: dict[int, OpenOrder] = {}
-        self._next = 1
+@dataclass
+class PaperMarketMaker:
+    notional: float
+    half_spread_bps: float
+    requote_seconds: float
+    bid: PaperQuote | None = None
+    ask: PaperQuote | None = None
 
-    async def balances(self, *_: str) -> tuple[Balance, Balance]:
-        return self.base, self.quote
+    def refresh(self, symbol: str, ts_ms: int, mid: float) -> None:
+        if mid <= 0:
+            return
+        stale = self.bid is None or ts_ms - self.bid.created_ts_ms >= int(self.requote_seconds * 1000)
+        if not stale:
+            return
+        qty = self.notional / mid
+        half = self.half_spread_bps / 10000.0
+        self.bid = PaperQuote(symbol, "BUY", mid * (1.0 - half), qty, ts_ms)
+        self.ask = PaperQuote(symbol, "SELL", mid * (1.0 + half), qty, ts_ms)
 
-    async def open_orders(self, _: str) -> list[OpenOrder]:
-        return list(self.orders.values())
-
-    async def place_maker(self, symbol: str, side: str, qty: Decimal, price: Decimal, client_id: str) -> dict:
-        oid = self._next
-        self._next += 1
-        order = OpenOrder(side, oid, client_id, price, qty, Decimal("0"), "NEW", now_ms())
-        self.orders[oid] = order
-        return {"symbol": symbol, "orderId": oid, "clientOrderId": client_id, "side": side,
-                "status": "NEW", "price": str(price), "origQty": str(qty), "executedQty": "0"}
-
-    async def cancel_order(self, _: str, order_id: int) -> dict | None:
-        order = self.orders.pop(order_id, None)
-        return {"orderId": order_id, "status": "CANCELED"} if order else None
-
-    async def cancel_our_orders(self, _: str, prefix: str = "oberon-") -> int:
-        ids = [oid for oid, o in self.orders.items() if o.client_order_id.startswith(prefix)]
-        for oid in ids:
-            self.orders.pop(oid, None)
-        return len(ids)
+    def on_trade(self, symbol: str, ts_ms: int, trade_price: float, mid: float) -> list[PaperFill]:
+        fills: list[PaperFill] = []
+        if self.bid and self.bid.symbol == symbol and trade_price <= self.bid.price:
+            fills.append(PaperFill(ts_ms, symbol, "BUY", self.bid.price, self.bid.quantity, mid, "trade_through"))
+            self.bid = None
+        if self.ask and self.ask.symbol == symbol and trade_price >= self.ask.price:
+            fills.append(PaperFill(ts_ms, symbol, "SELL", self.ask.price, self.ask.quantity, mid, "trade_through"))
+            self.ask = None
+        return fills

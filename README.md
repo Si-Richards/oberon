@@ -1,112 +1,87 @@
-# Oberon Market Maker
+# Oberon v0.9.1
 
-Oberon is a Binance Spot **Testnet / paper-trading** market-making research bot written in Python 3.12. Live Binance endpoints are deliberately rejected by configuration validation.
+Oberon is a Binance USD-M Futures **market microstructure research and paper market-making** project. v0.9.1 focuses on signal discovery: collecting high-frequency public Futures market data, storing one SQLite database per symbol, and testing whether observable market states predict later price movement or adverse selection.
 
-## What it does
+> v0.9.1 intentionally does **not** submit live Binance orders. The collector uses public market-data WebSockets only. Optional paper fills are local simulations.
 
-- Streams `bookTicker` from Binance Spot Testnet.
-- Places one post-only `LIMIT_MAKER` quote on each side.
-- Adjusts spread with observed short-window volatility.
-- Skews reservation price based on inventory imbalance.
-- Requotes on TTL or material price movement.
-- Reads Binance symbol filters and rounds price/quantity correctly.
-- Reconciles open orders from Binance REST.
-- Cancels only orders whose client IDs begin with `oberon-`.
-- Persists orders/events in SQLite.
-- Implements stale-market, volatility, inventory and daily-loss safety controls.
-- Runs as a non-root Docker user with a persistent `/data` volume.
+## What v0.9.1 adds
 
-## Safety status
-
-This repository is for engineering and strategy research. It supports only `paper` and `testnet` modes. It does **not** support production/live Binance trading.
+- Binance Futures partial-depth (`depth20@100ms`), aggregate-trade and mark-price streams.
+- Per-symbol SQLite market databases under `/data/markets-v091`.
+- L1/L5/L10/L20 order-book imbalance.
+- Depth notional at 5/10/20 levels.
+- Microprice and microprice displacement in bps.
+- Aggressor trade-flow imbalance over 5/30/60 seconds.
+- 5/30/60 second backward returns and 60-second realised volatility.
+- Mark price, index price and funding rate snapshots from the mark-price stream.
+- `directional_report` for directional cohort discovery.
+- `signal_report` with 5/15/30/60/120/300/900 second forward returns, quintile analysis, signal decay and a chronological 70/30 train/test split.
+- Optional local paper quotes/fills. No exchange order submission.
 
 ## Quick start
 
 ```bash
 cp .env.example .env
 nano .env
-docker compose up --build
+docker compose up -d --build
+docker logs -f binance-market-maker
 ```
 
-Paper mode requires no keys. For Binance Spot Testnet:
+The default container name remains `binance-market-maker` so the reporting commands match earlier Oberon deployments.
 
-```env
-TRADING_MODE=testnet
-BINANCE_API_KEY=...
-BINANCE_API_SECRET=...
-REST_BASE_URL=https://testnet.binance.vision
-WS_BASE_URL=wss://stream.testnet.binance.vision/ws
-```
+## Signal discovery
 
-Do not add `/api` to `REST_BASE_URL`; request paths already include `/api/v3/...`.
-
-## First Testnet run
-
-Use small settings initially:
-
-```env
-ORDER_NOTIONAL=10
-STALE_MARKET_DATA_MS=30000
-BASE_HALF_SPREAD_BPS=15
-MIN_HALF_SPREAD_BPS=10
-MAX_HALF_SPREAD_BPS=40
-ORDER_TTL_SECONDS=10
-MAX_BASE_VALUE=200
-MAX_DAILY_LOSS=25
-```
-
-Start in the foreground:
+After collecting data:
 
 ```bash
-docker compose up --build
+docker exec binance-market-maker \
+  python -m app.signal_report \
+  --hours 72 \
+  --horizons 5,15,30,60,120,300,900 \
+  --min-samples 100 \
+  --top 30 \
+  --current-only
 ```
 
-Expected logs include:
+For a seven-day confirmation window:
 
-```text
-starting mode=testnet symbol=BTCUSDT
-Binance clock offset=...
-startup cleanup canceled=...
-market WebSocket connected stream=btcusdt@bookTicker
-order placed side=BUY ...
-order placed side=SELL ...
+```bash
+docker exec binance-market-maker \
+  python -m app.signal_report \
+  --hours 168 \
+  --horizons 5,15,30,60,120,300,900 \
+  --min-samples 250 \
+  --top 50 \
+  --current-only
 ```
 
-Stop once with Ctrl+C and allow the grace period to cancel Oberon orders.
+## Directional report
 
-## Architecture
-
-```text
-Binance bookTicker WebSocket
-          |
-          v
-   Market state / volatility
-          |
-          v
- Inventory-aware strategy
-          |
-          v
-      Risk gates
-          |
-          v
- Order reconciliation / execution
-          |
-          +----> Binance Spot Testnet REST
-          |
-          +----> SQLite event/order state
+```bash
+docker exec binance-market-maker \
+  python -m app.directional_report \
+  --hours 72 \
+  --top 50 \
+  --current-only
 ```
 
-## Database
+By default it evaluates a 300-second horizon and applies a 16.5 bps expected round-trip hurdle. Override with `--horizon` and `--round-trip-bps`.
 
-Default path:
+## Database sizes
 
-```text
-/data/oberon.db
+```bash
+docker exec binance-market-maker python -m app.db_report --data-dir /data
 ```
 
-`StateStore` creates the parent directory before opening SQLite, avoiding the `sqlite3.OperationalError: unable to open database file` issue seen in the earlier prototype.
+## Data schema
 
-Docker Compose uses a named volume so the DB survives container recreation.
+Each symbol database contains `market_samples` with timestamps, bid/ask/mid, spread, depth, OBI, microprice, flow, return, volatility, mark/index price and funding rate. `paper_fills` is used only when `PAPER_ENABLED=true`.
+
+## Research interpretation
+
+A discovered relationship is not promoted to execution merely because its in-sample mean is positive. The signal report splits observations chronologically 70/30 and heavily penalises relationships that reverse sign out of sample. Re-run promising signals on later non-overlapping windows before using them as quote-skew or risk-gating inputs.
+
+The most useful first production use of a validated signal is expected to be **adverse-selection avoidance and quote skew**, not outright directional speculation.
 
 ## Tests
 
@@ -117,29 +92,14 @@ pip install -r requirements-dev.txt
 make check
 ```
 
-## Important limitations before any future live-trading work
+## Safety
 
-The next major engineering step is a fully authenticated Binance User Data Stream implementation so fills, partial fills, commissions, cancellations, balance changes and execution reports arrive in real time. Binance's current Testnet documentation states that user-data events are pushed in real time and order updates arrive as `executionReport` events. REST reconciliation should still remain as a recovery path.
+- Research/paper only.
+- Public Binance Futures feeds only.
+- No API key or secret is required.
+- No authenticated order endpoint exists in this release.
+- `RESEARCH_ONLY=true` is required when paper mode is enabled.
 
-Other future work:
+## Version
 
-- User Data Stream / execution-report consumer.
-- Proper realised P&L from fills and commissions.
-- Level-2 local order book with sequence validation.
-- Microprice and depth imbalance.
-- Queue-position / fill probability model.
-- Adverse-selection analytics.
-- Prometheus metrics and Grafana dashboards.
-- Historical event replay and backtesting.
-- Avellaneda-Stoikov quoting model as an optional strategy.
-
-## Operational notes
-
-- Testnet market WebSockets are expected to disconnect after 24 hours; the client reconnects automatically.
-- Binance sends WebSocket ping frames; aiohttp autoping/heartbeat is enabled.
-- `bookTicker` updates when the best bid/ask changes, so Testnet can be quiet. The default stale threshold is 30 seconds rather than the overly aggressive 2.5 seconds used by the first prototype.
-- API secrets belong only in `.env`, which is ignored by Git.
-
-## Disclaimer
-
-Trading involves risk. Testnet results do not predict live performance. Market-making can incur losses from adverse selection, fees, inventory exposure, latency and operational failures.
+`0.9.1` — signal discovery research release.

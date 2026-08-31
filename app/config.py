@@ -1,62 +1,68 @@
 from __future__ import annotations
 
-from decimal import Decimal
+import os
+from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+
+def _bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
+def _int(name: str, default: int) -> int:
+    return int(os.getenv(name, str(default)))
 
-    trading_mode: str = "paper"
-    binance_api_key: str = ""
-    binance_api_secret: str = ""
-    symbol: str = "BTCUSDT"
-    rest_base_url: str = "https://testnet.binance.vision"
-    ws_base_url: str = "wss://stream.testnet.binance.vision/ws"
-    database_path: Path = Path("/data/oberon.db")
 
-    order_notional: Decimal = Decimal("10")
-    base_half_spread_bps: Decimal = Decimal("12")
-    min_half_spread_bps: Decimal = Decimal("8")
-    max_half_spread_bps: Decimal = Decimal("40")
-    inventory_skew_bps: Decimal = Decimal("12")
-    target_base_value_percent: Decimal = Decimal("50")
+def _float(name: str, default: float) -> float:
+    return float(os.getenv(name, str(default)))
 
-    refresh_interval_ms: int = 1000
-    requote_threshold_bps: Decimal = Decimal("2")
-    order_ttl_seconds: int = 10
-    stale_market_data_ms: int = 30000
-    volatility_window_seconds: int = 30
-    max_volatility_bps: Decimal = Decimal("60")
-    max_base_value: Decimal = Decimal("200")
-    max_daily_loss: Decimal = Decimal("25")
-    recv_window_ms: int = Field(default=5000, ge=1000, le=60000)
-    log_level: str = "INFO"
 
-    paper_base_balance: Decimal = Decimal("0.001")
-    paper_quote_balance: Decimal = Decimal("100")
+def _symbols(raw: str) -> tuple[str, ...]:
+    out = tuple(dict.fromkeys(s.strip().upper() for s in raw.split(",") if s.strip()))
+    if not out:
+        raise ValueError("SYMBOLS must contain at least one symbol")
+    return out
+
+
+@dataclass(frozen=True)
+class Settings:
+    version: str = "0.9.1"
+    symbols: tuple[str, ...] = _symbols(os.getenv("SYMBOLS", "BTCUSDT,ETHUSDT,SOLUSDT"))
+    data_dir: Path = Path(os.getenv("OBERON_DATA_DIR", "/data"))
+    market_dir_name: str = os.getenv("MARKET_DIR_NAME", "markets-v091")
+    ws_base_url: str = os.getenv("FUTURES_WS_BASE_URL", "wss://fstream.binance.com")
+    rest_base_url: str = os.getenv("FUTURES_REST_BASE_URL", "https://fapi.binance.com")
+    sample_interval_ms: int = _int("SAMPLE_INTERVAL_MS", 1000)
+    depth_levels: int = _int("DEPTH_LEVELS", 20)
+    sqlite_commit_every: int = _int("SQLITE_COMMIT_EVERY", 25)
+    sqlite_busy_timeout_ms: int = _int("SQLITE_BUSY_TIMEOUT_MS", 5000)
+    stale_market_ms: int = _int("STALE_MARKET_MS", 5000)
+    paper_enabled: bool = _bool("PAPER_ENABLED", False)
+    paper_notional: float = _float("PAPER_NOTIONAL", 25.0)
+    paper_half_spread_bps: float = _float("PAPER_HALF_SPREAD_BPS", 8.0)
+    paper_requote_seconds: float = _float("PAPER_REQUOTE_SECONDS", 5.0)
+    research_only: bool = _bool("RESEARCH_ONLY", True)
 
     @property
-    def is_testnet(self) -> bool:
-        return self.trading_mode.lower() == "testnet"
+    def market_dir(self) -> Path:
+        return self.data_dir / self.market_dir_name
 
-    @property
-    def is_paper(self) -> bool:
-        return self.trading_mode.lower() == "paper"
+    def validate(self) -> None:
+        if self.sample_interval_ms < 100:
+            raise ValueError("SAMPLE_INTERVAL_MS must be >= 100")
+        if self.depth_levels not in {5, 10, 20}:
+            raise ValueError("DEPTH_LEVELS must be one of 5, 10, 20")
+        if not self.ws_base_url.startswith("wss://"):
+            raise ValueError("FUTURES_WS_BASE_URL must use wss://")
+        if self.paper_enabled and not self.research_only:
+            raise ValueError("v0.9.1 intentionally supports research/paper only; RESEARCH_ONLY must remain true")
 
-    @model_validator(mode="after")
-    def validate_safety(self) -> "Settings":
-        mode = self.trading_mode.lower()
-        if mode not in {"paper", "testnet"}:
-            raise ValueError("TRADING_MODE must be paper or testnet; live mode is intentionally unsupported")
-        if self.is_testnet:
-            if not self.binance_api_key or not self.binance_api_secret:
-                raise ValueError("Testnet mode requires BINANCE_API_KEY and BINANCE_API_SECRET")
-            if "testnet.binance.vision" not in self.rest_base_url:
-                raise ValueError("Testnet mode refuses non-testnet REST endpoint")
-            if "testnet.binance.vision" not in self.ws_base_url:
-                raise ValueError("Testnet mode refuses non-testnet WebSocket endpoint")
-        return self
+
+def load_settings() -> Settings:
+    s = Settings()
+    s.validate()
+    s.market_dir.mkdir(parents=True, exist_ok=True)
+    return s
